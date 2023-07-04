@@ -1,37 +1,70 @@
-import * as bootstrap from 'react-bootstrap'
-import Lexer from './lexer'
-import Evaluator from './evaluator'
+import Lexer from './compiler/lexer'
+import Evaluator from './compiler/evaluator'
 import CompilerEditor from './compilerEditor'
-import CompilerParser from './compilerParser'
+import CompilerParser from './compiler/parser'
+import { KeywordMap } from './compiler/lexer'
 import React from 'react'
 
-let textAreaStyle = {
-  height: 480
-}
 
 function Compiler() {
   let refInputInstance = React.useRef(null)
-  let lexer = new Lexer('')
-  let evaluator = new Evaluator()
+  const [astJson, setAstJson] = React.useState({})
+  const [result, setResult] = React.useState([''])
   const onLexingClick = (e) => {
-    console.log(refInputInstance.getContent())
-    lexer = new Lexer(refInputInstance.getContent())
-    let parser = new CompilerParser(lexer)
-    parser.parseProgram()
-    let program = parser.program
-    evaluator.eval(program)
+    try{
+      // console.clear()
+      const lexer = new Lexer(refInputInstance.getContent())
+      const parser = new CompilerParser(lexer)
+      const evaluator = new Evaluator()
+      parser.parseProgram()
+      const program = parser.program
+      evaluator.eval(program)
+      evaluator.toIr(program)
+      setAstJson(JSON.stringify(program.statements,null, 4))
+      console.log(evaluator.getIR())
+      setResult(merge(evaluator.getOutPut()))
+    }catch(e){
+      console.log(e)
+    }
   }
+  const merge = (arr)=>{
+    let newArr = []
+    arr.forEach((item, index) => {
+        if(item != arr[index-1]) {
+            newArr.push(item)
+        }
+    });
 
+    return newArr
+}
   return (
-    <div className="Compiler">
+    <div className="Compiler h-screen flex overflow-hidden">
+      <div className='w-1/2 h-full'>
       <h3 className=' text-green-700 bg-green-200 p-2'>Compiler</h3>
-      <div className='w-full p-2'>
-
-        <CompilerEditor ref={(ref) => { refInputInstance = ref }} keywords={lexer.getKeywords()} style={textAreaStyle} />
-
-        <bootstrap.Button className='mt-2' variant='danger' type="submit" onClick={onLexingClick}>
+      <div className='w-full p-2 h-full'>
+        <CompilerEditor ref={(ref) => { refInputInstance = ref }} keywords={KeywordMap} 
+        className="h-2/3"/>
+        <button className='mt-2 bg-red-500 p-2 rounded-md text-white font-bold '  onClick={onLexingClick}>
           Parsing
-        </bootstrap.Button >
+        </button >
+      </div>
+      </div>
+      <div className='w-1/2 h-full'>
+          <div className='h-1/2 w-full'>
+          <h3 className=' text-red-700 bg-red-200 p-2'>AST</h3>
+          <div className='p-2 h-full w-full'>
+            
+          <textarea readOnly defaultValue={astJson}  className='resize-none h-5/6 w-full border-2 border-gray-400 rounded-md' 
+          />
+          </div>
+          </div>
+          <div className='h-1/2 w-full'>
+          <h3 className=' text-yellow-700 bg-yellow-200 p-2'>Result</h3>
+          <div className='p-2 h-full w-full'>
+          <textarea readOnly defaultValue={result.join('')}  className='resize-none h-5/6 w-full border-2 border-gray-400 rounded-md' 
+          />
+          </div>
+          </div>
       </div>
     </div>
   );

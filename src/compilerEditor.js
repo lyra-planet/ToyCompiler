@@ -1,11 +1,6 @@
 import React, { Component } from 'react'
 import rangy from 'rangy';
-import Lexer from './lexer';
-
-let textAreaStyle = {
-	height: 480,
-	border: "1px solid black"
-};
+import Lexer from './compiler/lexer';
 
 class CompilerEditor extends Component {
 	constructor(props) {
@@ -21,21 +16,22 @@ class CompilerEditor extends Component {
 	}
 	// 抽出嵌套的元素
 	changeNode(n) {
-		let f = n.childNodes;
+		const f = n.childNodes;
 		for (let c in f) {
 			this.changeNode(f[c]);
 		}
 		if (n.data) {
 			this.lastBegin = 0
 			n.keywordCount = 0;
-			let lexer = new Lexer(n.data)
+			const lexer = new Lexer(n.data)
 			lexer.setLexingObserver(this, n)
 			lexer.lexing()
 		}
 	}
 	notifyTokenCreation(token, elementNode, begin, end) {
-		if (this.keywords[token.getLiteral()] !== undefined) {
-			let e = {}
+		if (this.keywords[token.literal]!==undefined) {
+			
+			const e = {}
 			e.node = elementNode
 			e.begin = begin
 			e.end = end
@@ -49,15 +45,15 @@ class CompilerEditor extends Component {
 			begin - this.lastBegin)
 		strBefore = this.changeSpaceToNBSP(strBefore)
 
-		let textNode = document.createTextNode(strBefore)
-		let parentNode = elementNode.parentNode
+		const textNode = document.createTextNode(strBefore)
+		const parentNode = elementNode.parentNode
 		parentNode.insertBefore(textNode, elementNode)
 
 
-		let span = document.createElement('span')
+		const span = document.createElement('span')
 		span.style.color = 'green'
 		span.classList.add(this.keywordClass)
-		span.appendChild(document.createTextNode(token.getLiteral()))
+		span.appendChild(document.createTextNode(token.literal))
 		parentNode.insertBefore(span, elementNode)
 		this.lastBegin = end - 1
 		elementNode.keywordCount--
@@ -78,17 +74,17 @@ class CompilerEditor extends Component {
 	hightLightSyntax() {
 		let i
 		for (i = 0; i < this.keywordElementArray.length; i++) {
-			let e = this.keywordElementArray[i]
+			const e = this.keywordElementArray[i]
 			this.currentElement = e.node
 			this.hightLightKeyword(e.token, e.node, e.begin, e.end)
 
 			if (this.currentElement.keywordCount === 0) {
-				let end = this.currentElement.data.length
+				const end = this.currentElement.data.length
 				let lastText = this.currentElement.data.substr(this.lastBegin,
 					end)
 				lastText = this.changeSpaceToNBSP(lastText)
-				let parent = this.currentElement.parentNode
-				let lastNode = document.createTextNode(lastText)
+				const parent = this.currentElement.parentNode
+				const lastNode = document.createTextNode(lastText)
 				parent.insertBefore(lastNode, this.currentElement)
 				parent.removeChild(this.currentElement)
 			}
@@ -108,10 +104,10 @@ class CompilerEditor extends Component {
 		}
 
 		//把原来的span标签keyword去掉,防止多个span标签嵌套
-		let spans = document.getElementsByClassName(this.keywordClass);
+		const spans = document.getElementsByClassName(this.keywordClass);
 		while (spans.length) {
-			let p = spans[0].parentNode;
-			let t = document.createTextNode(spans[0].innerText)
+			const p = spans[0].parentNode;
+			const t = document.createTextNode(spans[0].innerText)
 			p.insertBefore(t, spans[0])
 			p.removeChild(spans[0])
 		}
@@ -129,7 +125,7 @@ class CompilerEditor extends Component {
 
 	render() {
 		return (
-			<div style={textAreaStyle}
+			<div className='h-2/3 border-2 border-gray-400 rounded-md'
 				onKeyUp={this.onDivContentChange.bind(this)}
 				ref={(ref) => { this.divInstance = ref }}
 				contentEditable>
