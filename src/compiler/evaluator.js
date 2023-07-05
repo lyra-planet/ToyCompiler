@@ -125,6 +125,13 @@ class IREnvironment extends Environment {
 		super()
 		this.irVarIndex = 0;
 		this.irVarMap = { in: {}, out: {} }
+		this.ifElseCounter = 0;
+	}
+	addIfElseCounter() {
+		return ++this.ifElseCounter;
+	}
+	getIfElseCounter() {
+		return this.ifElseCounter;
 	}
 	find(name) {
 		if (name !== null) {
@@ -212,6 +219,12 @@ class Evaluator {
 	}
 	getVar(name = null) {
 		return this.IRenvironment.find(name);
+	}
+	getIfElseCounter() {
+		return this.IRenvironment.getIfElseCounter();
+	}
+	addIfElseCounter() {
+		return this.IRenvironment.addIfElseCounter();
 	}
 	newEnclosedEnvironment(outerEnv) {
 		let env = new Environment()
@@ -783,18 +796,19 @@ class Evaluator {
 	}
 	toIrIfExpression(node) {
 		let condition = this.toIr(node.condition)
-		this.addIR(`br i1 ${this.getVar()}, label %if, label %else`)
+		this.addIR(`br i1 ${this.getVar()}, label %if${this.addIfElseCounter()}, label %else${this.getIfElseCounter()}`)
 		if (this.isError(condition)) {
 			throw new Error("ERROR")
 		}
-		this.addIR(`if:`)
+		this.addIR(`if${this.getIfElseCounter()}:`)
 		this.toIr(node.consequence)
-		this.addIR(`br label %end`)
+		this.addIR(`br label %end${this.getIfElseCounter()}`)
 		if (node.alternative != null) {
-			this.addIR(`else:`)
+			this.addIR(`else${this.getIfElseCounter()}:`)
 			this.toIr(node.alternative)
-			this.addIR(`br label %end`)
+			this.addIR(`br label %end${this.getIfElseCounter()}`)
 		}
+		this.addIR(`end${this.getIfElseCounter()}:`)
 	}
 	toIrBlockStatement(node) {
 		for (let i = 0; i < node.statements.length; i++) {
