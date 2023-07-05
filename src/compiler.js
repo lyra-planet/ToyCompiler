@@ -21,12 +21,24 @@ function Compiler() {
       evaluator.eval(program)
       evaluator.toIr(program)
       setAstJson(JSON.stringify(program.statements,null, 4))
-      console.log(evaluator.getIR())
       setResult(merge(evaluator.getOutPut()))
+      console.log(flat(Object.values(evaluator.irFuncArray).map(item=>item.ir)))
     }catch(e){
       console.log(e)
     }
   }
+  const flat = (arr)=>{
+    if(Object.prototype.toString.call(arr) != "[object Array]"){return false};
+    let res = [];
+    for(var i=0;i<arr.length;i++){
+      if(arr[i] instanceof Array){
+        res = res.concat(flat(arr[i]))
+      }else{
+        res.push(arr[i])
+      }
+    }
+    return res;
+  };
   const merge = (arr)=>{
     let newArr = []
     arr.forEach((item, index) => {

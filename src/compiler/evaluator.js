@@ -9,7 +9,10 @@ const ObjTypes = {
 	FUNCTION_CALL: "FunctionCall",
 	STRING_OBJ: "String",
 }
-
+const BuiltInFunctions = {
+	LEN: "len",
+	PRINT: "print",
+}
 class BaseObject {
 	constructor(props) {
 		this.value = props.value
@@ -25,7 +28,7 @@ class String extends BaseObject {
 	}
 
 	inspect() {
-		return "content of string is: " + this.value+' '
+		return "content of string is: " + this.value + ' '
 	}
 }
 
@@ -36,7 +39,7 @@ class Integer extends BaseObject {
 	}
 
 	inspect() {
-		return "integer with value: " + this.value+' '
+		return "integer with value: " + this.value + ' '
 	}
 }
 
@@ -46,7 +49,7 @@ class Boolean extends BaseObject {
 		this.type = ObjTypes.BOOLEAN_OBJ
 	}
 	inspect() {
-		return "boolean with value: " + this.value+' '
+		return "boolean with value: " + this.value + ' '
 	}
 }
 
@@ -69,7 +72,7 @@ class ReturnValue extends BaseObject {
 	}
 
 	inspect() {
-		this.message = "return with value: " + this.valueObject.inspect()+' '
+		this.message = "return with value: " + this.valueObject.inspect() + ' '
 		return this.message
 	}
 }
@@ -89,6 +92,7 @@ class Environment {
 	constructor() {
 		this.map = {}
 		this.outer = undefined
+
 	}
 	get(name) {
 		let obj = this.map[name]
@@ -102,15 +106,57 @@ class Environment {
 
 		return obj
 	}
+	fromOuter(name) {
+		let obj = this.map[name]
+		if (obj) {
+			return null
+		}
+		if (this.outer) {
+			return this.outer.get(name)
+		}
+		return null
+	}
 	set(name, obj) {
 		this.map[name] = obj
 	}
 }
+class IREnvironment extends Environment {
+	constructor() {
+		super()
+		this.irVarIndex = 0;
+		this.irVarMap = { in: {}, out: {} }
+	}
+	find(name) {
+		if (name !== null) {
 
+			if (this.irVarMap.in[name]) {
+				return this.irVarMap.in[name]
+			} else if (this.irVarMap.out[name]) {
+				return this.irVarMap.out[name]
+			} else {
+				return null
+			}
+		} else {
+			return '%' + (this.irVarIndex)
+		}
+	}
+	add(name, fromOuter) {
+		this.irVarIndex++;
+
+		if (name !== null) {
+			if (fromOuter) {
+				this.irVarMap.out[name] = '%' + this.irVarIndex
+			} else {
+				this.irVarMap.in[name] = '%' + this.irVarIndex
+			}
+		}
+		return '%' + this.irVarIndex
+
+	}
+}
 class Evaluator {
 	constructor(props) {
 		this.environment = new Environment()
-		this.IRenvironment = new Environment()
 		//是否在函数体内
 		this.inFunction = false
 		this.ir = []; // 存储IR指令的数组
@@ -121,7 +167,9 @@ class Evaluator {
 		//储存IR全局变量的数组
 		this.irGlobalVar = [];
 		this.irGlobalVarIndex = 0;
-		this.outPut = []
+		this.outPut = [];
+		this.irFuncArray = {};
+		this.irFuncName = []
 	}
 
 	addVarMap(name, value) {
@@ -135,10 +183,21 @@ class Evaluator {
 		}
 		return value;
 	}
+	varFromOuter(name) {
+		let value = this.IRenvironment.fromOuter(name);
+		if (value !== null) {
+			return 1
+		} else {
+			return null;
+		}
+	}
 	getIR() {
 		return this.ir;
 	}
 	addIR(instruction) {
+		if (this.irFuncArray[this.getNowFunc()]) {
+			this.irFuncArray[this.getNowFunc()].ir.push(instruction)
+		}
 		this.ir.push(instruction);
 		this.irIndex++;
 	}
@@ -148,31 +207,11 @@ class Evaluator {
 	addOutPut(outPut) {
 		this.outPut.push(outPut);
 	}
-	addTempVar() {
-		let tempVar = `%${this.irTempVarIndex}`;
-		this.irTempVar.push(tempVar);
-		this.irTempVarIndex++;
-		return tempVar;
+	addVar(name = null, fromOuter = null) {
+		return this.IRenvironment.add(name, fromOuter);
 	}
-	addGlobalVar() {
-		let globalVar = `@${this.irGlobalVarIndex}`;
-		this.irGlobalVar.push(globalVar);
-		this.irGlobalVarIndex++;
-		return globalVar;
-	}
-	addVar() {
-		if (this.inFunction) {
-			return this.addTempVar();
-		} else {
-			return this.addGlobalVar();
-		}
-	}
-	getVar() {
-		if (this.inFunction) {
-			return this.irTempVar[this.irTempVarIndex - 1];
-		} else {
-			return this.irGlobalVar[this.irGlobalVarIndex - 1];
-		}
+	getVar(name = null) {
+		return this.IRenvironment.find(name);
 	}
 	newEnclosedEnvironment(outerEnv) {
 		let env = new Environment()
@@ -180,7 +219,7 @@ class Evaluator {
 		return env
 	}
 	newIrEnvironment(outerEnv) {
-		let env = new Environment()
+		let env = new IREnvironment()
 		env.outer = outerEnv
 		return env
 	}
@@ -188,12 +227,15 @@ class Evaluator {
 		switch (node.type) {
 			case "Program":
 				this.addIR("PROGRAM_START");
+				this.pushFunc('main')
 				this.toIrProgram(node);
+				this.popFunc()
 				this.addIR("PROGRAM_END");
 				break;
 			case "String":
 				break;
 			case "LetStatement":
+				this.addFuncStatement(node)
 				this.toIrLetStatement(node);
 				break;
 			case "Identifier":
@@ -210,6 +252,7 @@ class Evaluator {
 			case "Boolean":
 				break;
 			case "ExpressionStatement":
+				this.addFuncStatement(node)
 				this.toIr(node.expression)
 				break;
 			case "PrefixExpression":
@@ -225,6 +268,7 @@ class Evaluator {
 				this.toIrBlockStatement(node);
 				break;
 			case "ReturnStatement":
+				this.addFuncStatement(node)
 				this.toIrReturnStatement(node);
 				break;
 			default:
@@ -232,15 +276,44 @@ class Evaluator {
 				break;
 		}
 	}
+	addFuncStatement(statement) {
+		return this.irFuncArray[this.getNowFunc()].statements.push(statement)
+	}
+	pushFunc(name) {
+		this.irFuncArray[name] = { statements: [], ir: [] }
+		return this.irFuncName.push(name)
+	}
+	popFunc() {
+		return this.irFuncName.pop()
+	}
+	getNowFunc() {
+		return this.irFuncName[this.irFuncName.length - 1]
+	}
+	getFunc(name) {
+		return this.irFuncArray[name]
+	}
 	toIrProgram(program) {
 		let result = null
+		//主main
+		this.IRenvironment = new IREnvironment()
+		this.addIR(`define @main(){`)
 		for (let i = 0; i < program.statements.length; i++) {
 			result = this.toIr(program.statements[i])
 		}
+		this.addIR(`}`)
 		return result
 	}
-	toIrLetStatement(node,) {
+	toIrLetStatement(node) {
+		switch (node.name.token.literal) {
+			case BuiltInFunctions.LEN:
+				this.addOutPut("Invalid identifier name: len")
+				throw new Error("Invalid identifier name: len")
+			case BuiltInFunctions.PRINT:
+				this.addOutPut("Invalid identifier name: print")
+				throw new Error("Invalid identifier name: print")
+		}
 		if (node.value.type === "FunctionLiteral") {
+			this.pushFunc(node.name.token.literal)
 			this.inFunction = true
 			let oidEnv = this.IRenvironment
 			this.IRenvironment = this.newIrEnvironment(this.IRenvironment)
@@ -250,22 +323,36 @@ class Evaluator {
 			node.value.parameters.forEach(p => {
 				this.addVarMap(p.token.literal, '%' + p.token.literal)
 			})
-			this.addIR(`define @${node.name.token.literal}(` + params + `){`)
+			this.addIR(`define @${node.name.token.literal + '-anonymous'}(` + params + `){`)
 			this.addIR(`entry:`)
 			this.toIr(node.value)
 			this.addIR(`}`)
 			this.inFunction = false
+
+			let out = this.IRenvironment.irVarMap.out
+
 			this.IRenvironment = oidEnv
-		} else if (node.value.type === "Identifier") {
-			console.log(node)
+			this.popFunc()
+			console.log(out)
 			this.createVariable(node)
-			this.addIR(`store ${this.getVarMap(node.value.token.literal)}, %${node.name.token.literal}`);
+			this.addIR(`${this.addVar(node.name.token.literal)} = create-closure @${node.name.token.literal + '-anonymous'}, ${Object.keys(out).join(', ')}`)
+			this.addIR(`store ${this.getVar(node.name.token.literal)}, %${node.name.token.literal}`);
+		} else if (node.value.type === "Identifier") {
+			this.createVariable(node)
+			if (this.varFromOuter(node.value.token.literal)) {
+				this.addIR(`%${this.addVar(node.value.token.literal)} = load-free ${this.varFromOuter(node.value.token.literal)}`)
+				this.addIR(`store ${this.getVar(node.value.token.literal)}, %${node.name.token.literal}`);
+			} else {
+				this.addIR(`%${this.addVar(node.value.token.literal)} = load ${this.getVarMap(node.value.token.literal)}}`)
+				this.addIR(`store ${this.getVar(node.value.token.literal)}, %${node.name.token.literal}`);
+			}
+			this.varFromOuter(node.value.token.literal)
 			this.createNumVariable(node)
 		}
 		else if (node.value.type === 'Integer') {
 			this.createVariable(node)
-				this.addIR(`store ${node.value.token.literal}, %${node.name.token.literal}`);
-				this.createNumVariable(node)
+			this.addIR(`store ${node.value.token.literal}, %${node.name.token.literal}`);
+			this.createNumVariable(node)
 		} else if (node.value.type === 'InfixExpression') {
 			this.toIrInfixExpression(node.value)
 			this.createVariable(node)
@@ -278,15 +365,16 @@ class Evaluator {
 			this.toIrCallExpression(node.value)
 			this.createVariable(node)
 			this.addIR(`store ${this.getVar()}, %${node.name.token.literal}`)
+			this.addVarMap(node.name.token.literal, '%' + node.name.token.literal)
 		}
 
 	}
 	createVariable(node) {
-			this.addIR(`%${node.name.token.literal} = alloca`)
+		this.addIR(`%${node.name.token.literal} = alloca`)
 	}
 	createNumVariable(node) {
-		this.addIR(`${this.addVar()} = load %${node.name.token.literal}`)
-		this.addVarMap(node.name.token.literal, this.getVar())
+		// this.addIR(`${this.addVar()} = load %${node.name.token.literal}`)
+		this.addVarMap(node.name.token.literal, '%' + node.name.token.literal)
 	}
 	toIrFunctionLiteral(node) {
 		for (let i = 0; i < node.body.statements.length; i++) {
@@ -310,14 +398,14 @@ class Evaluator {
 	toIrCallExpression(node) {
 		let args = []
 		for (let i = 0; i < node.arguments.length; i++) {
-
 			if (node.arguments[i].type === 'Identifier') {
 				args.push('i32 ' + this.getVarMap(node.arguments[i].token.literal))
+				this.varFromOuter(node.arguments[i].token.literal)
 			} else if (node.arguments[i].type === 'Integer') {
 				args.push('i32 ' + node.arguments[i].value)
 			}
 		}
-		this.addIR(`${this.addVar()} = call @${node.function.token.literal}(${args.join(', ')})`)
+		this.addIR(`${this.addVar(node.function.token.literal)} = call @${node.function.token.literal}(${args.join(', ')})`)
 	}
 	toIrPrefixExpression(node) {
 		switch (node.operator) {
@@ -326,7 +414,7 @@ class Evaluator {
 			case "-":
 				return this.toIrMinusPrefixOperatorExpression(node.right)
 			default:
-				throw new Error("unknown operator:"+node.operator+" : "+node.right.type)
+				throw new Error("unknown operator:" + node.operator + " : " + node.right.type)
 		}
 	}
 	toIrBangOperatorExpression(right) {
@@ -361,7 +449,16 @@ class Evaluator {
 		if (right.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${right.value}`)
 		} else if (right.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(right.token.literal)}`)
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
+
 		}
 		else {
 			this.toIr(right)
@@ -383,21 +480,29 @@ class Evaluator {
 				return this.toIrDivideOperatorExpression(node.left, node.right)
 			case "==":
 				return this.toIrEqualsOperatorExpression(node.left, node.right)
-			// case "!=":
-			// 	return this.toIrNotEqualsOperatorExpression(node.left, node.right)
-			// case ">":
-			// 	return this.toIrGreaterThanOperatorExpression(node.left, node.right)
-			// case "<":
-			// 	return this.toIrLessThanOperatorExpression(node.left, node.right)
+			case "!=":
+				return this.toIrNotEqualsOperatorExpression(node.left, node.right)
+			case ">":
+				return this.toIrGreaterThanOperatorExpression(node.left, node.right)
+			case "<":
+				return this.toIrLessThanOperatorExpression(node.left, node.right)
 			default:
-				throw new Error("unknown operator:"+node.operator+" : "+node.right.type)
+				throw new Error("unknown operator:" + node.operator + " : " + node.right.type)
 		}
 	}
 	toIrPlusOperatorExpression(left, right) {
 		if (left.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${left.value}`)
 		} else if (left.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load  ${this.getVarMap(left.token.literal)}`)
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
 		} else {
 			this.toIr(left)
 		}
@@ -405,7 +510,15 @@ class Evaluator {
 		if (right.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${right.value}`)
 		} else if (right.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(right.token.literal)}`)
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
 		} else {
 			this.toIr(right)
 		}
@@ -416,7 +529,15 @@ class Evaluator {
 		if (left.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${left.value}`)
 		} else if (left.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(left.token.literal)}`)
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
 		} else {
 			this.toIr(left)
 		}
@@ -424,7 +545,15 @@ class Evaluator {
 		if (right.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${right.value}`)
 		} else if (right.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(right.token.literal)}`)
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
 		} else {
 			this.toIr(right)
 		}
@@ -435,7 +564,15 @@ class Evaluator {
 		if (left.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${left.value}`)
 		} else if (left.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(left.token.literal)}`)
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
 		} else {
 			this.toIr(left)
 		}
@@ -443,7 +580,15 @@ class Evaluator {
 		if (right.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${right.value}`)
 		} else if (right.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(right.token.literal)}`)
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
 		} else {
 			this.toIr(right)
 		}
@@ -454,7 +599,15 @@ class Evaluator {
 		if (left.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${left.value}`)
 		} else if (left.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(left.token.literal)}`)
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
 		} else {
 			this.toIr(left)
 		}
@@ -462,7 +615,15 @@ class Evaluator {
 		if (right.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${right.value}`)
 		} else if (right.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(right.token.literal)}`)
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
 		} else {
 			this.toIr(right)
 		}
@@ -473,7 +634,15 @@ class Evaluator {
 		if (left.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${left.value}`)
 		} else if (left.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(left.token.literal)}`)
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
 		} else {
 			this.toIr(left)
 		}
@@ -481,13 +650,133 @@ class Evaluator {
 		if (right.type === "Integer") {
 			this.addIR(`${this.addVar()} = load ${right.value}`)
 		} else if (right.type === "Identifier") {
-			this.addIR(`${this.addVar()} = load ${this.getVarMap(right.token.literal)}`)
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
 		} else {
 			this.toIr(right)
 		}
 		let rightBeforeVar = this.getVar()
 		this.addIR(`${this.addVar()} = icmp eq ${leftBeforeVar}, ${rightBeforeVar}`)
-		this.addIR(`${this.addVar()} = zext %${this.getVar()} to i32`)
+		let result = this.getVar()
+		this.addIR(`${this.addVar()} = zext ${result} to i32`)
+	}
+	toIrNotEqualsOperatorExpression(left, right) {
+		if (left.type === "Integer") {
+			this.addIR(`${this.addVar()} = load ${left.value}`)
+		} else if (left.type === "Identifier") {
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
+		} else {
+			this.toIr(left)
+		}
+		let leftBeforeVar = this.getVar()
+		if (right.type === "Integer") {
+			this.addIR(`${this.addVar()} = load ${right.value}`)
+		} else if (right.type === "Identifier") {
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
+		} else {
+			this.toIr(right)
+		}
+		let rightBeforeVar = this.getVar()
+		this.addIR(`${this.addVar()} = icmp ne ${leftBeforeVar}, ${rightBeforeVar}`)
+		let result = this.getVar()
+		this.addIR(`${this.addVar()} = zext ${result} to i32`)
+	}
+	toIrGreaterThanOperatorExpression(left, right) {
+		if (left.type === "Integer") {
+			this.addIR(`${this.addVar()} = load ${left.value}`)
+		} else if (left.type === "Identifier") {
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
+		} else {
+			this.toIr(left)
+		}
+		let leftBeforeVar = this.getVar()
+		if (right.type === "Integer") {
+			this.addIR(`${this.addVar()} = load ${right.value}`)
+		} else if (right.type === "Identifier") {
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
+		} else {
+			this.toIr(right)
+		}
+		let rightBeforeVar = this.getVar()
+		let result = this.getVar()
+		this.addIR(`${this.addVar()} = icmp sge ${leftBeforeVar}, ${rightBeforeVar}`)
+		this.addIR(`${this.addVar()} = zext ${result} to i32`)
+	}
+	toIrLessThanOperatorExpression(left, right) {
+		if (left.type === "Integer") {
+			this.addIR(`${this.addVar()} = load ${left.value}`)
+		} else if (left.type === "Identifier") {
+			if (this.varFromOuter(left.token.literal)) {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load-free ${this.getVarMap(left.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(left.token.literal,
+					this.varFromOuter(left.token.literal)
+				)} = load ${this.getVarMap(left.token.literal)}`)
+			}
+		} else {
+			this.toIr(left)
+		}
+		let leftBeforeVar = this.getVar()
+		if (right.type === "Integer") {
+			this.addIR(`${this.addVar()} = load ${right.value}`)
+		} else if (right.type === "Identifier") {
+			if (this.varFromOuter(right.token.literal)) {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load-free ${this.getVarMap(right.token.literal)}`)
+			} else {
+				this.addIR(`${this.addVar(right.token.literal,
+					this.varFromOuter(right.token.literal)
+				)} = load ${this.getVarMap(right.token.literal)}`)
+			}
+		} else {
+			this.toIr(right)
+		}
+		let rightBeforeVar = this.getVar()
+		this.addIR(`${this.addVar()} = icmp sle ${leftBeforeVar}, ${rightBeforeVar}`)
+		let result = this.getVar()
+		this.addIR(`${this.addVar()} = zext ${result} to i32`)
 	}
 	toIrIdentifier(node) {
 		console.log("ident")
@@ -517,7 +806,6 @@ class Evaluator {
 		let result = null
 		let obj = null
 		let right = null
-		console.log(node)
 		switch (node.type) {
 			case "Program":
 				result = this.evalProgram(node);
@@ -529,7 +817,15 @@ class Evaluator {
 				this.addOutPut('\n')
 				return new String(props)
 			case "LetStatement":
-				this.addOutPut("identifier name is: " + node.name.token.literal+' ')
+				switch (node.name.token.literal) {
+					case BuiltInFunctions.LEN:
+						this.addOutPut("Invalid identifier name: len")
+						throw new Error("Invalid identifier name: len")
+					case BuiltInFunctions.PRINT:
+						this.addOutPut("Invalid identifier name: print")
+						throw new Error("Invalid identifier name: print")
+				}
+				this.addOutPut("identifier name is: " + node.name.token.literal + ' ')
 				this.addOutPut("it is binding value is ")
 				let val = this.eval(node.value)
 				if (this.isError(val)) {
@@ -539,7 +835,8 @@ class Evaluator {
 				this.addOutPut('\n')
 				return val
 			case "Identifier":
-				this.addOutPut("identifier name is:" + node.token.literal+' ')
+
+				this.addOutPut("identifier name is:" + node.token.literal + ' ')
 				let value = this.evalIdentifier(node, this.environment)
 				this.addOutPut("it is binding value is " + value.inspect())
 				this.addOutPut('\n')
@@ -552,22 +849,32 @@ class Evaluator {
 				let funObj = new FunctionCall(props)
 				funObj.environment = this.newEnclosedEnvironment(this.environment)
 				this.addOutPut('\n')
+				
 				return funObj
 			case "CallExpression":
 				this.addOutPut("execute a function with content:" +
-					node.function.token.literal+' ')
+					node.function.token.literal + ' ')
+					let args = this.evalExpressions(node.arguments)
+					switch (node.function.token.literal) {
+						case BuiltInFunctions.LEN:
+						return this.builtins(node.function.token.literal, args)
+						case BuiltInFunctions.PRINT:
+						return this.builtins(node.function.token.literal, args)
+						default:
+					}
+					
 				let functionCall = this.eval(node.function)
+				console.log(functionCall)
 				if (this.isError(functionCall)) {
 					return functionCall
 				}
 				this.addOutPut("evaluate function call params: ")
-				let args = this.evalExpressions(node.arguments)
+		
 				if (args.length === 1 && this.isError(args[0])) {
 					return args[0]
 				}
-
 				for (let i = 0; i < args.length; i++) {
-					this.addOutPut("param " + i + " is " + args[i].inspect()+' ')
+					this.addOutPut("param " + i + " is " + args[i].inspect() + ' ')
 				}
 
 				let oldEnvironment = this.environment
@@ -587,19 +894,19 @@ class Evaluator {
 				this.environment = oldEnvironment
 				if (result.type === ObjTypes.RETURN_VALUE_OBJECT) {
 					console.log(result.valueObject.value)
-					this.addOutPut("function call return with : "+
-						result.valueObject.inspect()+' ')
+					this.addOutPut("function call return with : " +
+						result.valueObject.inspect() + ' ')
 					return result.valueObject
 				}
 				this.addOutPut('\n')
 				return result
 			case "Integer":
-				this.addOutPut("Integer with value: " + node.value+' ')
+				this.addOutPut("Integer with value: " + node.value + ' ')
 				props.value = node.value
 				this.addOutPut('\n')
 				return new Integer(props)
 			case "Boolean":
-				this.addOutPut("Boolean with value: " + node.value+' ')
+				this.addOutPut("Boolean with value: " + node.value + ' ')
 				props.value = node.value
 				this.addOutPut('\n')
 				return new Boolean(props)
@@ -611,7 +918,7 @@ class Evaluator {
 					return right
 				}
 				obj = this.evalPrefixExpression(node.operator, right)
-				this.addOutPut("eval prefix expression: " + obj.inspect()+' ')
+				this.addOutPut("eval prefix expression: " + obj.inspect() + ' ')
 				this.addOutPut('\n')
 				return obj
 			case "InfixExpression":
@@ -644,6 +951,36 @@ class Evaluator {
 			default:
 				return new Null({})
 		}
+	}
+	builtins(name, args) {
+		//实现内嵌API
+		switch (name) {
+			case "len":
+				if (args.length != 1) {
+					throw new Error("Wrong number of arguments when calling len")
+				}
+				console.log(name)
+				switch (args[0].type) {
+					case ObjTypes.STRING_OBJ:
+						var props = {}
+						props.value = args[0].value.length
+						var obj = new Integer(props)
+						console.log("API len return: ", obj.inspect())
+						return obj
+				}
+				break
+			case "print":
+				if (args.length != 1) {
+					throw new Error("Wrong number of arguments when calling print")
+				}
+				var props = {}
+				console.log("API print return: ", args[0].inspect())
+				return new Null(props)
+			default:
+				throw new Error("Unknown builtin function: " + name)
+		}
+
+
 	}
 	evalExpressions(exps) {
 		let result = []
@@ -737,12 +1074,12 @@ class Evaluator {
 		if (operator === '==') {
 			props.value = (left.value === right.value)
 			this.addOutPut("result on boolean operation of " + operator
-				+ " is " + props.value+' ')
+				+ " is " + props.value + ' ')
 			return new Boolean(props)
 		} else if (operator === '!=') {
 			props.value = (left.value !== right.value)
 			this.addOutPut("result on boolean operation of " + operator
-				+ " is " + props.value+' ')
+				+ " is " + props.value + ' ')
 			return new Boolean(props)
 		}
 
@@ -757,7 +1094,7 @@ class Evaluator {
 		let rightVal = right.value
 		let props = {}
 		props.value = leftVal + rightVal
-		this.addOutPut("result of string add is: " + props.value+' ')
+		this.addOutPut("result of string add is: " + props.value + ' ')
 		return new String(props)
 	}
 	evalIntegerInfixExpression(operator, left, right) {
@@ -798,7 +1135,7 @@ class Evaluator {
 			default:
 				throw new Error("unknown operator for Integer")
 		}
-		this.addOutPut("result of integer operation is: " + props.value+' ')
+		this.addOutPut("result of integer operation is: " + props.value + ' ')
 		let result = null
 		if (resultType === "integer") {
 			result = new Integer(props)
@@ -815,7 +1152,7 @@ class Evaluator {
 			case "-":
 				return this.evalMinusPrefixOperatorExpression(right)
 			default:
-				throw new Error("unknown operator: " + operator+" : "+right.type)
+				throw new Error("unknown operator: " + operator + " : " + right.type)
 		}
 	}
 	evalBangOperatorExpression(right) {
